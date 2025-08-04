@@ -1,0 +1,141 @@
+clear;
+clc;
+
+% Cargar los archivos necesarios
+try
+    load('comprimidas.mat', 'y_adpcm');
+    load('archivoproyectofinal.mat', 'Fs');
+catch
+    error('Error: Asegúrese de que comprimidas.mat y archivoproyectofinal.mat existan en su directorio.');
+end
+
+% Parámetros de la simulación
+EbN0_dB = 0:1:10;
+n_bits = 4; % Bits de la señal ADPCM
+sim_duration = 5; % Usar una porción de la señal para velocidad
+
+% Limitar la señal a una duración más corta para acelerar la simulación
+num_samples = round(sim_duration * Fs);
+y_adpcm = y_adpcm(1:num_samples);
+
+% Escalar y convertir la señal ADPCM a un flujo de bits
+% La señal ADPCM está en el rango [-1, 1]. La convertimos a enteros [0, 15]
+y_scaled = round((y_adpcm + 1) / 2 * (2^n_bits - 1));
+
+% CONVERSIÓN A BITS ROBUSTA (sin usar de2bi que da problemas)
+bits_stream = dec2bin(y_scaled, n_bits);
+bits_stream = (bits_stream(:) - '0')';
+
+% Simulación para ASK, 2-FSK y 16-QAM 
+ber_ask = zeros(size(EbN0_dB));
+ber_fsk = zeros(size(EbN0_dB));
+ber_qam = zeros(size(EbN0_dB));
+ber_ask_theor = zeros(size(EbN0_dB));
+ber_fsk_theor = zeros(size(EbN0_dB));
+ber_qam_theor = zeros(size(EbN0_dB));
+
+% Parámetros de cada modulación
+M_ask = 2; % 2-ASK
+M_qam = 16; % 16-QAM
+k_ask = log2(M_ask); % 1 bit/símbolo
+k_qam = log2(M_qam); % 4 bits/símbolo
+fc_fsk = [1000, 2000]; % Frecuencias portadoras para 2-FSK (Hz)
+Tb = 1/Fs; % Duración del bit
+fs_fsk = 16 * Fs; % Frecuencia de muestreo para FSK (mayor)
+
+for i = 1:length(EbN0_dB)
+    eb_n0_lin = 10^(EbN0_dB(i)/10);
+    
+    % Simulación 2-ASK 
+    % Mapear bits a símbolos: 0 -> 0.5, 1 -> 1.5
+    symbols_ask = (bits_stream * 1) + 0.5;
+    
+    % Añadir ruido AWGN
+    snr_ask_db = EbN0_dB(i) + 10*log10(k_ask);
+    noisy_symbols_ask = awgn(symbols_ask, snr_ask_db, 'measured');
+    
+    % Demodular
+    demod_bits_ask = (noisy_symbols_ask > 1);
+    
+    % Calcular BER
+    ber_ask(i) = sum(demod_bits_ask ~= bits_stream) / length(bits_stream);
+    
+    % BER Teórica 2-ASK
+    ber_ask_theor(i) = 0.5 * erfc(sqrt(eb_n0_lin));
+
+    
+    % Simulación 2-FSK Coherente 
+    % Esta es una simulación de BER simplificada, sin generar la señal completa.
+    ber_fsk(i) = 0.5 * erfc(sqrt(eb_n0_lin/2));
+    
+    % BER Teórica 2-FSK coherente
+    ber_fsk_theor(i) = 0.5 * erfc(sqrt(eb_n0_lin/2));
+
+    
+    % Simulación 16-QAM 
+    k = k_qam;
+    % Mapeo de bits a símbolos (QAM de 16)
+    qam_const = [-3-3i, -3-1i, -3+3i, -3+1i, -1-3i, -1-1i, -1+3i, -1+1i, ...
+                 3-3i,  3-1i,  3+3i,  3+1i,  1-3i,  1-1i,  1+3i,  1+1i] / sqrt(10);
+    
+    % Asegurarse de que el flujo de bits es un múltiplo de k_qam
+    bits_padding = mod(k_qam - mod(length(bits_stream), k_qam), k_qam);
+    padded_bits = [bits_stream, zeros(1, bits_padding)];
+    
+    % Convertir bits a índices de símbolos
+    symbols_qam_indices = bi2de(reshape(padded_bits, k_qam, [])', 'left-msb');
+    symbols_qam = qam_const(symbols_qam_indices + 1);
+    
+    % Añadir ruido AWGN
+    snr_qam_db = EbN0_dB(i) + 10*log10(k_qam);
+    noisy_symbols_qam = awgn(symbols_qam, snr_qam_db, 'measured');
+    
+    % Demodular
+    demod_indices_qam = zeros(size(noisy_symbols_qam));
+    for s = 1:length(noisy_symbols_qam)
+        [~, idx] = min(abs(noisy_symbols_qam(s) - qam_const));
+        demod_indices_qam(s) = idx - 1;
+    end
+    
+    % Convertir índices a bits 
+    demod_bits_qam = (dec2bin(demod_indices_qam, k_qam) - '0')';
+    demod_bits_qam = demod_bits_qam(:)';
+    
+    % Calcular BER
+    total_errors = sum(demod_bits_qam(1:length(bits_stream)) ~= bits_stream);
+    ber_qam(i) = total_errors / length(bits_stream);
+    
+    % BER Teórica 16-QAM
+    ber_qam_theor(i) = (3/4) * erfc(sqrt(k_qam*eb_n0_lin/10));
+
+end
+
+
+% Gráficas de resultados
+% Curva BER vs Eb/No
+figure;
+semilogy(EbN0_dB, ber_ask, 'b-o', EbN0_dB, ber_ask_theor, 'b--');
+hold on;
+semilogy(EbN0_dB, ber_fsk, 'g-o', EbN0_dB, ber_fsk_theor, 'g--');
+semilogy(EbN0_dB, ber_qam, 'r-o', EbN0_dB, ber_qam_theor, 'r--');
+grid on;
+legend('Simulada 2-ASK', 'Teórica 2-ASK', ...
+       'Simulada 2-FSK', 'Teórica 2-FSK', ...
+       'Simulada 16-QAM', 'Teórica 16-QAM');
+title('Curvas BER vs Eb/No para ASK, FSK y QAM');
+xlabel('Eb/No (dB)');
+ylabel('BER');
+
+% Constelaciones
+figure;
+subplot(1,2,1);
+plot(real(symbols_ask), imag(symbols_ask), 'bo', 'LineWidth', 2);
+title('Constelación 2-ASK');
+xlabel('In-fase'); ylabel('Cuadratura');
+grid on;
+
+subplot(1,2,2);
+plot(real(qam_const), imag(qam_const), 'ro', 'MarkerSize', 8, 'LineWidth', 2);
+title('Constelación 16-QAM');
+xlabel('In-fase'); ylabel('Cuadratura');
+grid on;

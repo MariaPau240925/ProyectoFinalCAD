@@ -1,0 +1,120 @@
+clear;
+clc;
+load('archivoproyectofinal.mat');
+y = raw_signal;
+
+% Si la señal original cargada es estéreo, combinarla para el procesamiento
+if size(y, 2) > 1
+    y = mean(y, 2);
+    fprintf('La señal estéreo se ha combinado para el procesamiento.\n');
+end
+
+% Implementación de PCM 
+fprintf('Iniciando codificación PCM...\n');
+% Definir los bits de cuantificación a probar
+bits_pcm = [8, 12, 16];
+snr_pcm = zeros(1, length(bits_pcm));
+bit_rate_pcm = zeros(1, length(bits_pcm));
+
+for i = 1:length(bits_pcm) 
+    n_bits = bits_pcm(i);
+    y_norm = y / max(abs(y));
+    
+    % Calcular el tamaño del paso de cuantificación
+    step_size = 2 / (2^n_bits);
+    
+    % Cuantificar la señal
+    y_quant = round(y_norm / step_size) * step_size;
+    
+    % Calcular el SNR
+    error = y_norm - y_quant;
+    snr_pcm(i) = 10 * log10(var(y_norm) / var(error));
+    
+    % Calcular el bit-rate
+    bit_rate_pcm(i) = Fs * n_bits;
+    fprintf('PCM con %d bits: SNR = %.2f dB, Bit-rate = %.2f bps\n', n_bits, snr_pcm(i), bit_rate_pcm(i));
+    
+    % Gráfica FFT de la señal reconstruida (centrada en 0 Hz)
+    figure;
+    N_quant = length(y_quant);
+    Y_quant_fft = fft(y_quant);
+    
+    % Usar fftshift para centrar el espectro en 0 Hz
+    Y_quant_fft_shifted = fftshift(Y_quant_fft);
+    
+    % Calcular la magnitud del espectro de doble lado
+    P_double_sided_quant = abs(Y_quant_fft_shifted / N_quant);
+    
+    % Definir el eje de frecuencia para el espectro de doble lado
+    % El rango va de -Fs/2 a Fs/2
+    f_double_sided_quant = (-N_quant/2 : N_quant/2-1) * (Fs / N_quant);
+    
+    plot(f_double_sided_quant, P_double_sided_quant);
+    title(sprintf('Espectro de Frecuencia de la Señal Reconstruida con PCM de %d bits', n_bits));
+    xlabel('Frecuencia (Hz)');
+    ylabel('|P(f)|');
+    grid on;
+end 
+
+%Implementación de DPCM 
+fprintf('\nIniciando codificación DPCM...\n');
+n_bits_dpcm = 8; 
+
+%Implementa aquí el codificador/decodificador DPCM
+y_dpcm = zeros(size(y)); % Señal reconstruida
+y_pred = zeros(size(y)); % Señal predicha
+
+% Inicializar el primer valor p
+if ~isempty(y)
+    y_dpcm(1) = y(1); 
+end
+
+% Normalizar la señal original para DPCM
+y_norm_dpcm = y / max(abs(y));
+step_size_dpcm = 2 / (2^n_bits_dpcm);
+
+for k = 2:length(y_norm_dpcm)
+    y_pred(k) = y_dpcm(k-1);
+    error_diff = y_norm_dpcm(k) - y_pred(k);
+    
+    % Cuantificación del error
+    error_quant = round(error_diff / step_size_dpcm) * step_size_dpcm;
+    
+    % Reconstrucción de la señal
+    y_dpcm(k) = y_pred(k) + error_quant;
+end
+
+% Calcular SNR para DPCM
+error_dpcm = y_norm_dpcm - y_dpcm;
+snr_dpcm = 10 * log10(var(y_norm_dpcm) / var(error_dpcm));
+bit_rate_dpcm = Fs * n_bits_dpcm;
+fprintf('DPCM con %d bits: SNR = %.2f dB, Bit-rate = %.2f bps\n', n_bits_dpcm, snr_dpcm, bit_rate_dpcm);
+
+% Gráfica FFT de la señal reconstruida con DPCM (centrada en 0 Hz)
+figure;
+N_dpcm = length(y_dpcm);
+Y_dpcm_fft = fft(y_dpcm);
+
+% Usar fftshift para centrar el espectro en 0 Hz
+Y_dpcm_fft_shifted = fftshift(Y_dpcm_fft);
+
+% Calcular la magnitud del espectro de doble lado
+P_double_sided_dpcm = abs(Y_dpcm_fft_shifted / N_dpcm);
+
+% Definir el eje de frecuencia para el espectro de doble lado
+f_double_sided_dpcm = (-N_dpcm/2 : N_dpcm/2-1) * (Fs / N_dpcm);
+
+plot(f_double_sided_dpcm, P_double_sided_dpcm, 'm'); 
+title(sprintf('Espectro de Frecuencia de la Señal Reconstruida con DPCM de %d bits', n_bits_dpcm));
+xlabel('Frecuencia (Hz)');
+ylabel('|P(f)|');
+grid on;
+
+
+% Generar la tabla bit-rate vs SNR 
+fprintf('\nTabla de resultados:\n');
+fprintf('Esquema      | Bits | Bit-rate (bps) | SNR (dB)\n');
+for i = 1:length(bits_pcm)
+    fprintf('PCM          | %2d   | %12.2f   | %6.2f\n', bits_pcm(i), bit_rate_pcm(i), snr_pcm(i));
+end
+fprintf('DPCM         | %2d   | %12.2f   | %6.2f\n', n_bits_dpcm, bit_rate_dpcm, snr_dpcm);

@@ -1,0 +1,100 @@
+clear;
+clc;
+
+% Cargar datos 
+load('ofdm_results.mat', 'ofdm_signal');
+load('archivoproyectofinal.mat', 'Fs');
+load('comprimidas.mat', 'y_adpcm');
+
+% Configurar parámetros OFDM 
+N_sub = 64;          % Subportadoras
+cp_len = 16;         % Prefijo cíclico
+mod_type = 'QPSK';   
+bits_per_sample = 2; % QPSK = 2 bits/símbolo
+
+% Preparar demodulación
+% Ajustar longitud para evitar errores de índice
+valid_length = min(length(ofdm_signal), floor(length(ofdm_signal)/(N_sub+cp_len))*(N_sub+cp_len));
+ofdm_signal = ofdm_signal(1:valid_length);
+
+num_ofdm_blocks = length(ofdm_signal)/(N_sub + cp_len);
+num_symbols = N_sub * num_ofdm_blocks;
+
+% Ecualización MMSE 
+H_est = ones(1, N_sub); % Canal estimado 
+snr_db = 20; % SNR para cálculo MMSE
+mmse_eq = conj(H_est)./(abs(H_est).^2 + 1/10^(snr_db/10));
+
+% Demodulación OFDM 
+demod_symbols = zeros(1, num_symbols);
+for block_idx = 1:num_ofdm_blocks
+    start_idx = (block_idx-1)*(N_sub+cp_len) + cp_len + 1;
+    rx_block = ofdm_signal(start_idx:start_idx+N_sub-1);
+    
+    fft_result = fft(rx_block);
+    demod_symbols((block_idx-1)*N_sub+1:block_idx*N_sub) = fft_result .* mmse_eq;
+end
+
+% Demodulación QPSK 
+% Convertir símbolos a bits
+demod_bits = zeros(1, num_symbols*2);
+demod_bits(1:2:end) = real(demod_symbols) < 0;
+demod_bits(2:2:end) = imag(demod_symbols) < 0;
+
+% Reconstrucción de señal
+% Asegurar que la longitud coincida
+num_samples = floor(length(demod_bits)/4);
+reconstructed_samples = zeros(1, num_samples);
+
+for i = 1:num_samples
+    bit_idx = (i-1)*4 + 1;
+    sample_bits = demod_bits(bit_idx:bit_idx+3);
+    sample_value = sum(sample_bits .* [8 4 2 1]);
+    reconstructed_samples(i) = (sample_value/7.5) - 1;
+end
+
+% Tomar hasta la longitud de la señal original
+valid_samples = min(length(reconstructed_samples), length(y_adpcm));
+y_adpcm = y_adpcm(1:valid_samples)';
+reconstructed_samples = reconstructed_samples(1:valid_samples);
+
+% Cálculo de métricas
+% SNR
+noise = reconstructed_samples - y_adpcm;
+snr_value = 10*log10(mean(reconstructed_samples.^2)/mean(noise.^2));
+
+% MOS aproximado
+mos_value = 1 + 0.15*snr_value - 0.003*snr_value^2;
+mos_value = max(min(mos_value, 5), 1);
+
+% Guardar resultados
+audiowrite('audio_reconstruido.wav', reconstructed_samples, Fs);
+save('demod_results.mat', 'snr_value', 'mos_value', 'reconstructed_samples');
+
+% Visualización 
+figure;
+
+% Señal en tiempo
+subplot(2,1,1);
+plot(y_adpcm(1:1000), 'b'); hold on;
+plot(reconstructed_samples(1:1000), 'r--');
+title('Señal original vs reconstruida');
+xlabel('Muestras'); ylabel('Amplitud');
+legend('Original', 'Reconstruida');
+grid on;
+
+% Espectro de frecuencia
+subplot(2,1,2);
+[pxx_orig, f] = pwelch(y_adpcm, hann(1024), 512, [], Fs);
+pxx_rec = pwelch(reconstructed_samples, hann(1024), 512, [], Fs);
+semilogy(f, pxx_orig, 'b', f, pxx_rec, 'r');
+title('Densidad espectral de potencia');
+xlabel('Frecuencia (Hz)'); ylabel('PSD (dB/Hz)');
+legend('Original', 'Reconstruida');
+grid on;
+
+% Resultados 
+fprintf('Demodulación completada:\n');
+fprintf('SNR: %.2f dB\n', snr_value);
+fprintf('MOS: %.2f\n', mos_value);
+disp('Audio guardado como audio_reconstruido.wav');

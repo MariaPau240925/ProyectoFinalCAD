@@ -1,0 +1,97 @@
+clear;
+clc;
+
+% Cargar señal procesada desde el paso anterior
+load('archivoproyectofinal.mat');
+y = raw_signal;
+
+% Convertir a mono si es necesario
+if size(y, 2) > 1
+    y = mean(y, 2);
+    fprintf('Señal estéreo convertida a mono para la compresión.\n');
+end
+
+% Normalizar la señal entre [-1, 1]
+y_norm = y / max(abs(y));
+
+%% Compresión µ-law (µ = 255) 
+mu = 255;
+
+fprintf('Aplicando compresión µ-law (µ = 255)...\n');
+
+% Codificación µ-law
+y_mu = sign(y_norm) .* log(1 + mu * abs(y_norm)) / log(1 + mu);
+
+% Expandir (decodificar) µ-law para comparar
+y_mu_expanded = sign(y_mu) .* ((1 + mu).^abs(y_mu) - 1) / mu;
+
+% Calcular el error cuadrático medio (MSE)
+mse_mu = mean((y_norm - y_mu_expanded).^2);
+
+% Mostrar resultados
+fprintf('µ-law compression aplicada. MSE = %.6f\n', mse_mu);
+
+% Graficar señal original vs comprimida
+figure;
+plot(y_norm(1:1000), 'b'); hold on;
+plot(y_mu_expanded(1:1000), 'r--');
+legend('Original', 'Recuperada (µ-law)');
+title('Comparación señal original vs µ-law recuperada');
+xlabel('Muestras'); ylabel('Amplitud');
+grid on;
+
+%% Codificación ADPCM 
+fprintf('\nIniciando codificación ADPCM...\n');
+
+% Inicialización
+n_bits_adpcm = 4; % 
+step_size_adpcm = 2 / (2^n_bits_adpcm);
+y_adpcm = zeros(size(y_norm)); % Señal reconstruida
+y_pred = zeros(size(y_norm));  % Predicción previa
+
+% Primer valor directo
+y_adpcm(1) = y_norm(1);
+
+for k = 2:length(y_norm)
+    % Predicción simple (señal anterior)
+    y_pred(k) = y_adpcm(k - 1);
+
+    % Cálculo del error
+    error_diff = y_norm(k) - y_pred(k);
+
+    % Cuantificación del error
+    error_quant = round(error_diff / step_size_adpcm) * step_size_adpcm;
+
+    % Reconstrucción
+    y_adpcm(k) = y_pred(k) + error_quant;
+end
+
+% Calcular MSE de ADPCM
+mse_adpcm = mean((y_norm - y_adpcm).^2);
+
+% Calcular razón de compresión:
+% Supongamos que la señal original era de 16 bits por muestra
+original_bits = 16;
+compressed_bits_adpcm = n_bits_adpcm;
+compression_ratio_adpcm = original_bits / compressed_bits_adpcm;
+
+fprintf('ADPCM (%d bits): MSE = %.6f, razón de compresión = %.2f:1\n', ...
+        n_bits_adpcm, mse_adpcm, compression_ratio_adpcm);
+
+% Graficar comparación
+figure;
+plot(y_norm(1:1000), 'b'); hold on;
+plot(y_adpcm(1:1000), 'g--');
+legend('Original', 'Recuperada (ADPCM)');
+title('Comparación señal original vs ADPCM');
+xlabel('Muestras'); ylabel('Amplitud');
+grid on;
+
+%% Tabla de resultados 
+fprintf('\nResumen de Compresión:\n');
+fprintf('Esquema    | Bits utilizados | MSE       | Razón Compresión\n');
+fprintf('µ-law      | Variable (µ=255)| %.6f | N/A\n', mse_mu);
+fprintf('ADPCM      | %2d bits         | %.6f | %.2f:1\n', ...
+        n_bits_adpcm, mse_adpcm, compression_ratio_adpcm);
+
+save('comprimidas.mat', 'y_norm', 'y_mu', 'y_adpcm');

@@ -1,0 +1,54 @@
+clear;
+clc;
+[y, Fs] = audioread('melodia.wav');
+
+if Fs ~= 44100
+    error('El archivo de audio debe tener una frecuencia de muestreo de 44.1 kHz.');
+end
+duracion_s = length(y) / Fs;
+if duracion_s < 10
+    error('El archivo de audio debe tener una duración de al menos 10 segundos.');
+end
+fprintf('Archivo de audio cargado exitosamente.\n');
+fprintf('Frecuencia de muestreo: %d Hz\n', Fs);
+fprintf('Duración: %.2f segundos\n', duracion_s);
+
+%% Graficar la señal en el dominio del tiempo
+t = (0:length(y)-1) / Fs;
+figure;
+plot(t, y);
+title('Señal de Audio en el Dominio del Tiempo');
+xlabel('Tiempo (s)');
+ylabel('Amplitud');
+grid on;
+
+%% Comprobar si la señal tiene más de un canal 
+if size(y, 2) > 1
+    % Convertir a mono promediando los canales para el análisis 
+    y_mono = mean(y, 2);
+else
+    % Si ya es mono, usar la señal original
+    y_mono = y;
+end
+
+%% Graficar la señal en el dominio de la frecuencia (FFT) 
+N = length(y_mono); 
+Y_fft = fft(y_mono); % Calculamos la FFT 
+Y_fft_shifted = fftshift(Y_fft);
+P_double_sided = abs(Y_fft_shifted/N);
+
+% Definir el eje de frecuencia para el espectro 
+% El rango es de-Fs/2 a Fs/2
+f_double_sided = (-N/2:N/2-1)*(Fs/N);
+
+figure;
+plot(f_double_sided, P_double_sided);
+title('Espectro de Frecuencia de la Señal de Audio');
+xlabel('Frecuencia (Hz)');
+ylabel('|P(f)|');
+grid on;
+
+%% Guardar los datos de la señal sin procesaen un archivo .mat 
+raw_signal = y; 
+save('archivoproyectofinal.mat', 'raw_signal', 'Fs');
+fprintf('Archivo archivoproyectofinal.mat guardado exitosamente.\n');
